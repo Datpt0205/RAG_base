@@ -1,0 +1,12 @@
+Below is a technical customer question, we want to extract keywords for the purpose of using keyword search to search content.
+Extract the keywords from the following sentence, then concatenate the keywords together into one line.
+NOTE returns only results without any further explanation and avoid stopwords, please. For example:
+Customer question:
+"Please tell me the working mechanism behind the product BD-368"
+Expected results is dictionary format:
+{{"keywords" : "working mechanism product BD-368" }}
+
+{format_instructions}
+
+Let's handle the following customer question:
+{user_query}

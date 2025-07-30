@@ -1,0 +1,44 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    container_name: rag_qdrant
+    networks:
+      - public-network
+    # ports:
+    #   - 6333:6333
+    expose:
+      - 6333
+    volumes:
+      - ./qdrant_data:/qdrant/storage 
+
+  backend:
+    build: . 
+    container_name: rag_api
+    networks:
+      - public-network
+    restart: on-failure
+    command: bash -c "alembic upgrade head && python3 -m src.main"
+    # ports:
+    #   - 8000:8000
+    volumes:
+      - ./alembic:/app/alembic
+      - ./cache:/app/cache
+      # - ./b.pdf:/app/b.pdf
+      # - ./Alibaba_Group.pdf:/app/Alibaba_Group.pdf
+    depends_on:
+      - qdrant
+    env_file: .env
+    environment:
+      - PG_HOST=postgres_rag
+      - PG_PORT=5432
+      - FASTEMBED_CACHE_DIR=/app/cache
+      - HF_HOME=/app/cache
+
+volumes:
+  qdrant_data:
+
+networks:
+  public-network:
+    external: true
+    name: nginx_public-network

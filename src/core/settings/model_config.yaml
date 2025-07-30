@@ -1,0 +1,10 @@
+EMBEDDING_MODEL:
+  SENTENCE_TRANSFORMER: "BAAI/bge-small-en-v1.5"
+  TEXT_EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+  LATE_INTERACTION_TEXT_EMBEDDING_MODEL: "colbert-ir/colbertv2.0"
+  BM25_EMBEDDING_MODEL: "Qdrant/bm25"
+
+RERANKING_MODEL:
+  CROSS_ENCODER_MS_MARCO_RERANK: "cross-encoder/ms-marco-MiniLM-L-2-v2"
+  MIXEDBREAD_AI_MXBAI_RERANK: "mixedbread-ai/mxbai-rerank-xsmall-v1"
+  BAAI_COLLECTION_RERANK: "BAAI/bge-reranker-v2-m3"

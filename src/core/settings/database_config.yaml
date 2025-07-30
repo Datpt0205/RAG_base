@@ -1,0 +1,27 @@
+POSTGRES:
+  USER: "ratemate_pg_dev"
+  PASSWORD: "ratemate_pg_dev"
+  HOST: "ratemate_pg_dev" 
+  PORT: "5432"
+  DATABASE_NAME: "ratemate_db_dev"
+  SQLALCHEMY_ECHO: "true"
+
+# MYSQL:
+#   HOST: "107.148.233.40" # ip production
+#   PORT: 15479
+#   DATABASE: "dev_finance_system"
+#   USER: "finance_working"
+#   PASSWORD: "eD2WgK90HTpQkcllmMwdKHfIbitzohq0"
+#   CHARSET: "utf8mb4"
+#   POOL_SIZE: 10
+#   MAX_OVERFLOW: 20
+
+MYSQL:
+  HOST: "14.225.220.56" # ip dev
+  PORT: 15479
+  DATABASE: "ratemate_system"
+  USER: "ratemate"
+  PASSWORD: "HGW4hFHhzs87DrhrripfPmsAXR9JJVOQ"
+  CHARSET: "utf8mb4"
+  POOL_SIZE: 10
+  MAX_OVERFLOW: 20

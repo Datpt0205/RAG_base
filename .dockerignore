@@ -1,0 +1,12 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+venv/
+.venv/
+node_modules/
+*.md
+cache/
+rag_ollama/
+qdrant_data/
+docker-compose-prod.yml

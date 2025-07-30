@@ -1,0 +1,4 @@
+UVICORN_FORMATTER: 'time="%(asctime)-15s" thread=%(thread)d module=%(module)s level=%(levelname)-7s message="%(message)s"'
+FORMATTER: 'time="%(asctime)-15s" thread=%(thread)d module=%(module)s level=%(levelname)-7s %(message)s' # (%(filename)s:%(lineno)d)'
+DATE_FORMATTER: "%Y-%m-%d %H:%M:%S"
+ROTATION: "midnight"
