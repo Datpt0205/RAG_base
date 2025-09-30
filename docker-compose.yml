@@ -6,9 +6,9 @@ services:
     networks:
       - public-network
     ports:
-      - 6666:6333
+      - 6334:6333
     expose:
-      - 6666
+      - 6334
     volumes:
       - ./qdrant_data:/qdrant/storage
 
