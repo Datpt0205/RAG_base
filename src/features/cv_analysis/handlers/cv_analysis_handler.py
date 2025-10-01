@@ -1,13 +1,17 @@
+# server/src/features/cv_analysis/handlers/cv_analysis_handler.py
+
 import re, json, base64, os, uuid, tempfile
 from typing import Any, Optional, List, Dict
 from openai import OpenAI
 
 from src.core.utils.logger.custom_logging import LoggerMixin
 from src.core.schemas.cv import (
-    CvAnalysis, CvExtract, RadarItem, RecommendedRole
+    CvAnalysis, CvExtract, EducationItem, Entities, RadarItem, RecommendedRole, WorkItem
 )
 from src.core.providers.provider_factory import ModelProviderFactory, ProviderType
 from src.core.schemas.cv_ui import UiCvAnalysis, UiStrength, UiWeakness, UiIndustry, UiRole
+from src.features.cv_analysis.cache import cv_hash, load_cache, save_cache
+from src.features.cv_analysis.taxonomy import canonicalize, score_domains, learning_link
 
 # ====== Regex ======
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -21,13 +25,26 @@ Return STRICT JSON with:
 - strengths: string[] (max 6)
 - weaknesses: string[] (max 6)
 - recommended_roles: {{title: string, confidence: number between 0 and 1}}[] (2-4 items)
-- radar: {{axis: string, score: integer 0..100}}[] for axes: Backend, Data, DevOps, Frontend, AI/ML
+
+- radar_fixed: {{axis: "Backend"|"Data"|"DevOps"|"Frontend"|"AI/ML", score: integer 0..100}}[] 
+  # Optional legacy 5-axis radar for compatibility. Include if relevant.
+
+- domain_radar: 
+  # REQUIRED. A dynamic radar by job domains (5–7 axes). Choose axes that best match THIS CV.
+  # Examples of domains you MAY use (you can add others if strongly justified):
+  # ["Helpdesk","IT Support","Networking","SysAdmin","Security","Cloud","Backend","Frontend",
+  #  "Mobile","Data","DevOps","ML/AI","QA/Testing","Product","UX/UI","Project Mgmt","Content/Marketing"]
+  # Output format: {{axis: string, score: integer 0..100}}[]
+
+- education: [{{school: string, degree?: string, field?: string, start_year?: number, end_year?: number}}]
+- experience: [{{company: string, title?: string, start_year?: number, end_year?: number, projects?: string[]}}]
+- entities: {{companies: string[], schools: string[], projects: string[]}}
 
 Rules:
-- Normalize skill names (e.g., 'js' -> 'JavaScript', 'postgres' -> 'PostgreSQL').
-- Confidence reflects suitability given experience and skills.
-- Radar must have exactly 5 axes listed above.
-Return ONLY JSON object.
+- Normalize years to 4-digit integers where possible. If "2019–2021", map start_year=2019, end_year=2021.
+- Deduplicate repeated companies, schools, projects.
+- For domain_radar, pick the most relevant domains for THIS PERSON; at least 3 axes, typically 5–7.
+- Return ONLY a JSON object.
 Text:
 ```{text}```"""
 
@@ -96,10 +113,13 @@ class CvAnalysisHandler(LoggerMixin):
             return {
                 "skills": {"hard": [], "soft": []},
                 "strengths": [], "weaknesses": [],
-                "recommended_roles": [], "radar": [],
+                "recommended_roles": [],
+                "radar_fixed": [], "domain_radar": [],
+                "education": [], "experience": [],
+                "entities": {"companies": [], "schools": [], "projects": []},
             }
 
-        # skills
+        # ---- skills
         skills = data.get("skills")
         if isinstance(skills, dict):
             skills.setdefault("hard", [])
@@ -110,36 +130,104 @@ class CvAnalysisHandler(LoggerMixin):
             skills = {"hard": self._as_list(skills), "soft": []}
         data["skills"] = skills
 
-        # strengths / weaknesses
+        # ---- strengths / weaknesses
         data["strengths"] = self._as_list(data.get("strengths"))
         data["weaknesses"] = self._as_list(data.get("weaknesses"))
 
-        # recommended_roles
+        # ---- recommended_roles
         rec = data.get("recommended_roles") or []
         if isinstance(rec, dict): rec = [rec]
         fixed_rec = []
         for r in rec:
-            if not isinstance(r, dict): 
+            if not isinstance(r, dict):
                 continue
             title = str(r.get("title") or r.get("role") or "Engineer")
             conf = r.get("confidence")
-            try: conf = float(conf)
-            except Exception: conf = 0.7
+            try:
+                conf = float(conf)
+            except Exception:
+                conf = 0.7
             fixed_rec.append({"title": title, "confidence": max(0.0, min(1.0, conf))})
         data["recommended_roles"] = fixed_rec
 
-        # radar
-        radar = data.get("radar") or []
-        if isinstance(radar, dict): radar = [radar]
-        fixed_radar = []
-        for it in radar:
-            if not isinstance(it, dict): 
+        # ---- radar_fixed (legacy 5 trục)
+        radar_fixed = data.get("radar_fixed") or data.get("radar") or []
+        if isinstance(radar_fixed, dict):
+            radar_fixed = [radar_fixed]
+        fixed_5 = []
+        for it in radar_fixed:
+            if not isinstance(it, dict):
                 continue
             axis = str(it.get("axis") or it.get("name") or "General")
-            try: score = int(it.get("score", 0))
-            except Exception: score = 0
-            fixed_radar.append({"axis": axis, "score": max(0, min(100, score))})
-        data["radar"] = fixed_radar
+            try:
+                score = int(it.get("score", 0))
+            except Exception:
+                score = 0
+            fixed_5.append({"axis": axis, "score": max(0, min(100, score))})
+        data["radar_fixed"] = fixed_5
+
+        # ---- domain_radar (linh động)
+        domain_radar = data.get("domain_radar") or []
+        if isinstance(domain_radar, dict):
+            domain_radar = [domain_radar]
+        dyn = []
+        for it in domain_radar:
+            if not isinstance(it, dict):
+                continue
+            axis = str(it.get("axis") or it.get("name") or "").strip()
+            if not axis:
+                continue
+            try:
+                score = int(it.get("score", 0))
+            except Exception:
+                score = 0
+            dyn.append({"axis": axis, "score": max(0, min(100, score))})
+        data["domain_radar"] = dyn
+
+        # ---- education
+        edu = data.get("education") or []
+        if isinstance(edu, dict): edu = [edu]
+        data["education"] = []
+        for e in edu:
+            if isinstance(e, dict):
+                data["education"].append({
+                    "school": (str(e.get("school","")).strip() or None),
+                    "degree": (e.get("degree") or None),
+                    "field": (e.get("field") or None),
+                    "start_year": int(e["start_year"]) if str(e.get("start_year","")).isdigit() else None,
+                    "end_year": int(e["end_year"]) if str(e.get("end_year","")).isdigit() else None,
+                })
+
+        # ---- experience
+        exp = data.get("experience") or []
+        if isinstance(exp, dict): exp = [exp]
+        data["experience"] = []
+        for w in exp:
+            if isinstance(w, dict):
+                sy = w.get("start_year"); ey = w.get("end_year")
+                sy = int(sy) if str(sy).isdigit() else None
+                ey = int(ey) if str(ey).isdigit() else None
+                pr = w.get("projects") or []
+                if isinstance(pr, str): pr = [pr]
+                data["experience"].append({
+                    "company": (str(w.get("company","")).strip() or None),
+                    "title": (w.get("title") or None),
+                    "start_year": sy, "end_year": ey,
+                    "projects": [str(p) for p in pr if p],
+                })
+
+        # ---- entities
+        ents = data.get("entities") or {}
+        if not isinstance(ents, dict): ents = {}
+        for k in ["companies","schools","projects"]:
+            v = ents.get(k) or []
+            if isinstance(v, str): v = [v]
+            ents[k] = [str(s) for s in v if s]
+        data["entities"] = ents
+
+        # ---- unify final 'radar' for downstream:
+        # ưu tiên domain_radar (linh động). Nếu rỗng => dùng radar_fixed (5 trục). Nếu vẫn rỗng => []
+        data["radar"] = data["domain_radar"] if data["domain_radar"] else data["radar_fixed"]
 
         return data
 
@@ -269,59 +357,73 @@ class CvAnalysisHandler(LoggerMixin):
         model_name: str = "gpt-4o-mini"
     ) -> UiCvAnalysis:
 
-        if provider_type == ProviderType.OPENAI:
-            api_key = ModelProviderFactory._get_api_key(provider_type)
+        # 1) Thử dùng OpenAI để dựng payload UI
+        if provider_type == ProviderType.OPENAI or str(provider_type).lower() == "openai":
+            api_key = ModelProviderFactory._get_api_key(ProviderType.OPENAI)
             if api_key:
                 try:
                     return self._generate_ui_with_openai(core, model_name, api_key)
                 except Exception as e:
                     self.logger.warning(f"OpenAI UI synthesis failed, fallback heuristics. Error: {e}")
 
-        # ===== Fallback Heuristic =====
-        radar_map = {r.axis: r.score for r in (core.radar or [])}
+        # 2) Fallback Heuristic (không gọi OpenAI)
+        # 2.1 domain scores + radar động theo taxonomy
+        hard_sk: List[str] = core.skills.get("hard", []) or []
+        domain_scores: List[tuple[str, int]] = score_domains(hard_sk)   # <-- tạo trước, tránh UnboundLocalError
+        radar_dynamic: List[RadarItem] = [RadarItem(axis=d, score=s) for d, s in domain_scores]
 
+        # 2.2 strengths: ưu tiên domain_scores; nếu không có thì dùng radar tĩnh của core; cuối cùng là từ hard skills
         strengths: List[UiStrength] = []
-        if radar_map:
-            for axis, score in radar_map.items():
-                strengths.append(UiStrength(skill=axis, score=int(score)))
-        elif core.skills.get("hard"):
-            for s in core.skills["hard"][:5]:
+        if domain_scores:
+            strengths = [UiStrength(skill=d, score=s) for d, s in sorted(domain_scores, key=lambda x: -x[1])[:5]]
+        elif core.radar:
+            for r in core.radar:
+                strengths.append(UiStrength(skill=r.axis, score=int(r.score)))
+        elif hard_sk:
+            for s in hard_sk[:5]:
                 strengths.append(UiStrength(skill=s, score=80))
 
+        # 2.3 weaknesses: từ domain_scores điểm thấp + link học
         weaknesses: List[UiWeakness] = []
-        if radar_map:
-            for axis, score in sorted(radar_map.items(), key=lambda x: x[1])[:3]:
-                weaknesses.append(UiWeakness(
-                    skill=axis, gap=max(0, 100 - int(score)),
-                    tip=f"Tăng {axis} qua dự án nhỏ & luyện 30–60 phút/ngày"
-                ))
-        elif core.weaknesses:
-            for w in core.weaknesses[:3]:
-                weaknesses.append(UiWeakness(skill=w, gap=25, tip="Bổ sung kiến thức nền + thực hành mini-project"))
+        for axis, score in sorted(domain_scores, key=lambda x: x[1])[:3]:
+            link = learning_link(axis)           # link theo domain
+            if not link:                         # fallback theo 1 skill phổ biến trong domain
+                for s in hard_sk:
+                    link = learning_link(s)
+                    if link:
+                        break
+            weaknesses.append(
+                UiWeakness(
+                    skill=axis,
+                    gap=max(0, 100 - int(score)),
+                    tip=f"Tăng {axis} qua dự án nhỏ & luyện 30–60 phút/ngày",
+                    url=link
+                )
+            )
 
+        # 2.4 industries (demo rules)
         industries: List[UiIndustry] = []
         def add_ind(name, score, why): industries.append(UiIndustry(name=name, score=int(score), rationale=why))
-        hs = [s.lower() for s in core.skills.get("hard", [])]
+        hs = [s.lower() for s in hard_sk]
         if any(k in hs for k in ["sql","python","etl","airflow","spark"]): add_ind("Fintech", 86, "Phù hợp kỹ năng xử lý dữ liệu/ETL")
-        if any(k in hs for k in ["react","next","node","fastapi"]): add_ind("E-commerce", 79, "Kinh nghiệm web + phân tích hành vi")
-        if any(k in hs for k in ["ml","pytorch","nlp","recsys"]): add_ind("AI/ML", 72, "Nền tảng AI/NLP/RecSys")
+        if any(k in hs for k in ["react","next","node","fastapi"]):       add_ind("E-commerce", 79, "Kinh nghiệm web + phân tích hành vi")
+        if any(k in hs for k in ["ml","pytorch","nlp","recsys"]):         add_ind("AI/ML", 72, "Nền tảng AI/NLP/RecSys")
 
+        # 2.5 roles từ recommended_roles
         roles: List[UiRole] = []
         for r in core.recommended_roles[:4]:
-            roles.append(UiRole(name=r.title, score=int(round(r.confidence*100)), rationale=None))
+            roles.append(UiRole(name=r.title, score=int(round(r.confidence * 100)), rationale=None))
 
+        # 2.6 explanations (không gọi OpenAI ở heuristic; để rỗng)
         explanations: List[str] = []
-        if provider_type == ProviderType.OPENAI:
-            api_key = ModelProviderFactory._get_api_key(provider_type)
-            if api_key:
-                explanations = self._generate_explanations_openai(core, model_name, api_key)
 
         return UiCvAnalysis(
             strengths=strengths[:5],
             weaknesses=weaknesses[:5],
             industries=industries[:3] or [UiIndustry(name="General Software", score=70)],
             roles=roles or [UiRole(name="Backend Engineer", score=75)],
-            explanations=explanations or None
+            explanations=explanations or None,
+            radar=radar_dynamic,                    # FE sẽ vẽ radar động
         )
 
     # ---------- public: main analyze ----------
@@ -348,29 +450,43 @@ class CvAnalysisHandler(LoggerMixin):
         if not text or len(text.strip()) < 20:
             raise ValueError("CV text is empty or too short")
 
-        # 2) Gọi LLM phân tích cốt lõi
-        data = self._analyze_text_openai(text, model_name=model_name, api_key=api_key)
+        # 2) CACHE theo hash text
+        h = cv_hash(text)
+        cached = load_cache(h)
+        if cached:
+            self.logger.info(f"[CV] cache hit {h}")
+            data = cached
+        else:
+            data = self._analyze_text_openai(text, model_name=model_name, api_key=api_key)
+            data = self._sanitize_openai_output(data)
+            save_cache(h, data)
+            self.logger.info(f"[CV] cache saved {h}")
 
-        data = self._sanitize_openai_output(data)
-        self.logger.info(f"[CV] Sanitized keys: {list(data.keys())}")
-        self.logger.info(f"[CV] skills.hard len={len(data['skills']['hard'])}, "
-                        f"skills.soft len={len(data['skills']['soft'])}, "
-                        f"radar len={len(data.get('radar', []))}, "
-                        f"roles len={len(data.get('recommended_roles', []))}")
+        # 3) Chuẩn hoá skill theo taxonomy
+        skills = data.get("skills", {"hard": [], "soft": []})
+        skills["hard"] = canonicalize(skills.get("hard", []))
+        skills["soft"] = canonicalize(skills.get("soft", []))
 
-        # 3) Build core response
+        # 4) Build core response (bao gồm fields mới)
         extract = self._extract_contacts(text)
-        cv_id = "cva_" + uuid.uuid4().hex[:10]
+        cv_id = "cva_" + h
 
         radar = [RadarItem(**r) for r in data.get("radar", [])]
         roles = [RecommendedRole(**r) for r in data.get("recommended_roles", [])]
 
+        education = [EducationItem(**e) for e in data.get("education", [])]
+        experience = [WorkItem(**w) for w in data.get("experience", [])]
+        entities = Entities(**data.get("entities", {}))
+
         return CvAnalysis(
             cv_id=cv_id,
             extract=extract,
-            skills=data.get("skills", {"hard": [], "soft": []}),
+            skills=skills,
             strengths=data.get("strengths", []),
             weaknesses=data.get("weaknesses", []),
             recommended_roles=roles,
             radar=radar,
+            education=education,
+            experience=experience,
+            entities=entities,
         )

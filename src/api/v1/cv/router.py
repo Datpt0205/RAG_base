@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, Response, status, HTTPException
 from typing import Optional
-from src.core.schemas.cv import AnalyzeCvRequest, AnalyzeCvResponse
+from src.core.schemas.cv import AnalyzeCvResponse
 from src.core.schemas.cv_ui import UiAnalyzeResponse
 from src.core.utils.logger.custom_logging import LoggerMixin
 from src.features.cv_analysis.handlers.cv_analysis_handler import CvAnalysisHandler
