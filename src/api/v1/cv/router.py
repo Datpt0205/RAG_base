@@ -2,10 +2,37 @@ from fastapi import APIRouter, UploadFile, File, Form, Response, status, HTTPExc
 from typing import Optional
 from src.core.schemas.cv import AnalyzeCvRequest, AnalyzeCvResponse
 from src.core.schemas.cv_ui import UiAnalyzeResponse
+from src.core.utils.logger.custom_logging import LoggerMixin
 from src.features.cv_analysis.handlers.cv_analysis_handler import CvAnalysisHandler
+logger = LoggerMixin().logger
 
 router = APIRouter(prefix="/cv")
 handler = CvAnalysisHandler()
+
+@router.post("/analyze-ui-heuristic")
+async def analyze_ui_heuristic(
+    provider_type: str = Form("openai"),
+    model_name: str = Form("gpt-4o-mini"),
+    raw_text: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    try:
+        file_bytes = await file.read() if file else None
+        content_type = file.content_type if file else None
+
+        core = handler.analyze(
+            provider_type=provider_type,
+            model_name=model_name,
+            raw_text=raw_text,
+            file_bytes=file_bytes,
+            file_content_type=content_type
+        )
+        # ép dùng fallback heuristic (không gọi OpenAI lần 2)
+        ui_payload = handler.to_ui_payload(core, provider_type="none", model_name=model_name)
+        return {"status": "success", "message": "ok", "data": ui_payload.model_dump()}
+    except Exception as e:
+        logger.exception("analyze-ui-heuristic failed")
+        return {"status": "error", "message": str(e), "data": None}
 
 @router.post("/analyze-ui", response_model=UiAnalyzeResponse)
 async def analyze_cv_ui(

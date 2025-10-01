@@ -1,5 +1,3 @@
-# server/src/features/cv_analysis/handlers/cv_analysis_handler.py
-
 import re, json, base64, os, uuid, tempfile
 from typing import Any, Optional, List, Dict
 from openai import OpenAI
@@ -19,11 +17,11 @@ PHONE_RE = re.compile(r"(\+?\d[\d\-\s]{7,}\d)")
 PROMPT_JSON = """You analyze CV/resume text.
 
 Return STRICT JSON with:
-- skills: {hard: string[], soft: string[]}
+- skills: {{hard: string[], soft: string[]}}
 - strengths: string[] (max 6)
 - weaknesses: string[] (max 6)
-- recommended_roles: {title: string, confidence: number between 0 and 1}[] (2-4 items)
-- radar: {axis: string, score: integer 0..100}[] for axes: Backend, Data, DevOps, Frontend, AI/ML
+- recommended_roles: {{title: string, confidence: number between 0 and 1}}[] (2-4 items)
+- radar: {{axis: string, score: integer 0..100}}[] for axes: Backend, Data, DevOps, Frontend, AI/ML
 
 Rules:
 - Normalize skill names (e.g., 'js' -> 'JavaScript', 'postgres' -> 'PostgreSQL').
@@ -47,9 +45,9 @@ YÊU CẦU:
 - Dẫn chiếu rõ ràng tới kỹ năng, điểm mạnh/yếu, và vai trò gợi ý (ví dụ: "SQL + ETL mạnh → phù hợp Data Engineer").
 - Không bịa đặt dữ kiện không có trong dữ liệu.
 - Trả về JSON object dạng:
-{
+{{
   "explanations": ["...", "..."]
-}"""
+}}"""
 
 VISION_PROMPT = """Read this resume/CV image carefully and transcribe all visible text.
 Return ONLY the plain text (no explanations, no JSON)."""
@@ -83,6 +81,67 @@ class CvAnalysisHandler(LoggerMixin):
     # ---------- OpenAI helpers ----------
     def _openai_client(self, api_key: str) -> OpenAI:
         return OpenAI(api_key=api_key)
+
+    # ---------- tiny utils to normalize ----------
+    def _as_list(self, x):
+        if x is None: return []
+        if isinstance(x, list): return [str(i) for i in x]
+        if isinstance(x, str): return [x]
+        if isinstance(x, dict): return [str(v) for v in x.values()]
+        return []
+
+    def _sanitize_openai_output(self, data: dict) -> dict:
+        """Normalize possibly-bad JSON from LLM to the schema we expect."""
+        if not isinstance(data, dict):
+            return {
+                "skills": {"hard": [], "soft": []},
+                "strengths": [], "weaknesses": [],
+                "recommended_roles": [], "radar": [],
+            }
+
+        # skills
+        skills = data.get("skills")
+        if isinstance(skills, dict):
+            skills.setdefault("hard", [])
+            skills.setdefault("soft", [])
+            skills["hard"] = self._as_list(skills.get("hard"))
+            skills["soft"] = self._as_list(skills.get("soft"))
+        else:
+            skills = {"hard": self._as_list(skills), "soft": []}
+        data["skills"] = skills
+
+        # strengths / weaknesses
+        data["strengths"] = self._as_list(data.get("strengths"))
+        data["weaknesses"] = self._as_list(data.get("weaknesses"))
+
+        # recommended_roles
+        rec = data.get("recommended_roles") or []
+        if isinstance(rec, dict): rec = [rec]
+        fixed_rec = []
+        for r in rec:
+            if not isinstance(r, dict): 
+                continue
+            title = str(r.get("title") or r.get("role") or "Engineer")
+            conf = r.get("confidence")
+            try: conf = float(conf)
+            except Exception: conf = 0.7
+            fixed_rec.append({"title": title, "confidence": max(0.0, min(1.0, conf))})
+        data["recommended_roles"] = fixed_rec
+
+        # radar
+        radar = data.get("radar") or []
+        if isinstance(radar, dict): radar = [radar]
+        fixed_radar = []
+        for it in radar:
+            if not isinstance(it, dict): 
+                continue
+            axis = str(it.get("axis") or it.get("name") or "General")
+            try: score = int(it.get("score", 0))
+            except Exception: score = 0
+            fixed_radar.append({"axis": axis, "score": max(0, min(100, score))})
+        data["radar"] = fixed_radar
+
+        return data
 
     # ---------- Explanations by OpenAI ----------
     def _generate_explanations_openai(self, core: CvAnalysis, model_name: str, api_key: str) -> List[str]:
@@ -123,12 +182,20 @@ class CvAnalysisHandler(LoggerMixin):
                 "content": _UI_PROMPT + json.dumps(core_json, ensure_ascii=False)
             }]
         )
-        data: Dict[str, Any] = json.loads(resp.choices[0].message.content)
+        raw = resp.choices[0].message.content
+        # Guard JSON
+        try:
+            data: Dict[str, Any] = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("OpenAI UI JSON is not an object")
+        except Exception as e:
+            self.logger.warning(f"[CV UI] Parse failed: {e}; raw={raw[:400]}")
+            raise
 
-        strengths = [UiStrength(**s) for s in data.get("strengths", [])]
-        weaknesses = [UiWeakness(**w) for w in data.get("weaknesses", [])]
-        industries = [UiIndustry(**i) for i in data.get("industries", [])]
-        roles = [UiRole(**r) for r in data.get("roles", [])]
+        strengths = [UiStrength(**s) for s in data.get("strengths", []) if isinstance(s, dict)]
+        weaknesses = [UiWeakness(**w) for w in data.get("weaknesses", []) if isinstance(w, dict)]
+        industries = [UiIndustry(**i) for i in data.get("industries", []) if isinstance(i, dict)]
+        roles = [UiRole(**r) for r in data.get("roles", []) if isinstance(r, dict)]
         explanations = [str(x) for x in data.get("explanations", [])] or None
 
         return UiCvAnalysis(
@@ -156,7 +223,15 @@ class CvAnalysisHandler(LoggerMixin):
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": PROMPT_JSON.format(text=text)}],
         )
-        return json.loads(resp.choices[0].message.content)
+        raw = resp.choices[0].message.content
+        # LOG RAW 500 CHỮ ĐẦU
+        self.logger.info(f"[CV] OpenAI RAW (first 500): {raw[:500]}")
+        try:
+            data = json.loads(raw)
+        except Exception as e:
+            self.logger.exception(f"[CV] OpenAI JSON parse failed: {e}")
+            raise
+        return data
 
     def _ocr_with_openai(self, image_bytes: bytes, model_name: str, api_key: str) -> str:
         client = self._openai_client(api_key)
@@ -202,7 +277,7 @@ class CvAnalysisHandler(LoggerMixin):
                 except Exception as e:
                     self.logger.warning(f"OpenAI UI synthesis failed, fallback heuristics. Error: {e}")
 
-        # ===== Fallback Heuristic (giữ để endpoint luôn có dữ liệu) =====
+        # ===== Fallback Heuristic =====
         radar_map = {r.axis: r.score for r in (core.radar or [])}
 
         strengths: List[UiStrength] = []
@@ -258,7 +333,6 @@ class CvAnalysisHandler(LoggerMixin):
         file_bytes: Optional[bytes],
         file_content_type: Optional[str]
     ) -> CvAnalysis:
-        # Hiện chỉ support OpenAI
         api_key = ModelProviderFactory._get_api_key(provider_type)
         if provider_type != ProviderType.OPENAI:
             raise ValueError("Currently only 'openai' is supported for CV analysis")
@@ -276,6 +350,13 @@ class CvAnalysisHandler(LoggerMixin):
 
         # 2) Gọi LLM phân tích cốt lõi
         data = self._analyze_text_openai(text, model_name=model_name, api_key=api_key)
+
+        data = self._sanitize_openai_output(data)
+        self.logger.info(f"[CV] Sanitized keys: {list(data.keys())}")
+        self.logger.info(f"[CV] skills.hard len={len(data['skills']['hard'])}, "
+                        f"skills.soft len={len(data['skills']['soft'])}, "
+                        f"radar len={len(data.get('radar', []))}, "
+                        f"roles len={len(data.get('recommended_roles', []))}")
 
         # 3) Build core response
         extract = self._extract_contacts(text)
