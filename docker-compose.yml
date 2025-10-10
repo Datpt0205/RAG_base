@@ -40,6 +40,7 @@ services:
       - ./alembic:/app/alembic
       - ./src:/app/src
       - ./menu_data:/app/menu_data
+      - ./hf_cache:/app/cache:rw
     depends_on:
       - ratemate_pg_dev
       - qdrant
