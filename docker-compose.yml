@@ -2,7 +2,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     restart: always
-    container_name: ratemate_qdrant
+    container_name: mse_qdrant
     networks:
       - public-network
     ports:
@@ -12,24 +12,24 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage
 
-  ratemate_pg_dev:
+  mse_pg_dev:
     image: postgres:latest
-    container_name: ratemate_pg_dev
+    container_name: mse_pg_dev
     networks:
       - public-network
     restart: always
     volumes:
-      - ratemate_pg_data_dev:/var/lib/postgresql/data/
+      - mse_pg_data_dev:/var/lib/postgresql/data/
     ports:
       - 5555:5432
     environment:
-      - POSTGRES_DB=ratemate_db_dev
-      - POSTGRES_USER=ratemate_pg_dev
-      - POSTGRES_PASSWORD=ratemate_pg_dev
+      - POSTGRES_DB=mse_db_dev
+      - POSTGRES_USER=mse_pg_dev
+      - POSTGRES_PASSWORD=mse_pg_dev
 
   backend:
     build: . 
-    container_name: ratemate_api
+    container_name: mse_api
     networks:
       - public-network
     restart: on-failure
@@ -42,20 +42,20 @@ services:
       - ./menu_data:/app/menu_data
       - ./hf_cache:/app/cache:rw
     depends_on:
-      - ratemate_pg_dev
+      - mse_pg_dev
       - qdrant
     env_file: .env
     environment:
-      - PG_HOST=ratemate_pg_dev
+      - PG_HOST=mse_pg_dev
       - PG_PORT=5432
       - FASTEMBED_CACHE_DIR=/app/cache
       - HF_HOME=/app/cache
 
 volumes:
   qdrant_data:
-  ratemate_pg_data_dev:
+  mse_pg_data_dev:
 
 networks:
   public-network:
     external: true
-    name: nginx_public-network
+    name: mse_net

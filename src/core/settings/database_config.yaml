@@ -1,9 +1,9 @@
 POSTGRES:
-  USER: "ratemate_pg_dev"
-  PASSWORD: "ratemate_pg_dev"
-  HOST: "ratemate_pg_dev" 
+  USER: "mse_pg_dev"
+  PASSWORD: "mse_pg_dev"
+  HOST: "mse_pg_dev" 
   PORT: "5432"
-  DATABASE_NAME: "ratemate_db_dev"
+  DATABASE_NAME: "mse_db_dev"
   SQLALCHEMY_ECHO: "true"
 
 # MYSQL:

@@ -17,14 +17,12 @@ class IncludeAPIRouter(object):
         from src.api.v1.menu_extraction.review_generator import router as router_review_generator
         from src.api.v1.menu_extraction.menu_extractor import router as router_menu_extractor
         from src.api.v1.cv.router import router as router_cv
-        from src.api.v1.cv.ocr_router import router as router_ocr
 
         router = APIRouter(prefix='/api/v1')
 
         #MSE
             
         router.include_router(router_cv, tags=['MSE - CV Analysis'])
-        router.include_router(router_ocr, tags=['MSE - CV OCR'])
 
         #base RAG
         router.include_router(router_review_generator, tags=['MSE - Review Generator'])

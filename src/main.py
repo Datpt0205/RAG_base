@@ -15,6 +15,7 @@ from src.core.utils.constants import CODEMIND_LLM
 from src.app import IncludeAPIRouter, logger_instance
 from src.core.utils.config_loader import ConfigReaderInstance
 from src.features.rag.handlers.file_partition_handler import DocumentExtraction
+from src.api.v1.cv.router import init_resources
 
 logger = logger_instance.get_logger(__name__)
 
@@ -73,6 +74,7 @@ async def app_lifespan(app: FastAPI):
         
         logger.info("Start loading default models...")
         results = await model_manager.load_default_models()
+        init_resources()
         
         for model, success in results.items():
             if success:
