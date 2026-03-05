@@ -1,12 +1,87 @@
+# Version control
 .git
+.gitignore
+.gitmodules
+
+# Python cache
 __pycache__
 *.pyc
 *.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
 venv/
 .venv/
+env/
+ENV/
+
+# Node modules (if any)
 node_modules/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
 *.md
+README*
+docs/
+
+# Training outputs (LARGE!)
+outputs_train/
+outputs_jobfit_two_stage/
+output_train/
+checkpoints/
+runs/
+logs/
+wandb/
+
+# Model files (LARGE! - these are mounted via volumes)
+merged_qwen2p5_3b_jobfit/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.onnx
+
+# Database & cache
 cache/
-rag_ollama/
 qdrant_data/
-docker-compose-prod.yml
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker & Compose files (not needed in container)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Test files
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+
+# Development tools
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+*.csv
+*.parquet
+*.json.gz
+*.tar.gz
+*.zip

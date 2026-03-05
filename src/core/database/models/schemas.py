@@ -1,9 +1,35 @@
 import uuid
+from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import Column, String, ForeignKey, Integer, DateTime, Boolean, REAL, Text
+from sqlalchemy import Column, String, ForeignKey, Integer, DateTime, Boolean, REAL, Text, BigInteger
 from sqlalchemy.orm import relationship
 
 from src.core.database.db_connection import Base
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    job_id = Column(BigInteger, primary_key=True, index=True)
+
+    title = Column(Text, nullable=True)
+    company_name = Column(Text, nullable=True)
+    location = Column(Text, nullable=True)
+
+    industries = Column(Text, nullable=True)
+    skills = Column(Text, nullable=True)
+    salary_bucket = Column(Text, nullable=True)
+    benefits = Column(Text, nullable=True)
+
+    employee_bucket = Column(Text, nullable=True)
+    company_industries = Column(Text, nullable=True)
+    company_specialities = Column(Text, nullable=True)
+
+    job_description = Column(Text, nullable=True)
+
+    source = Column(Text, nullable=False, default="jobfit")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 class APIKey(Base):
     __tablename__ = "api_keys"

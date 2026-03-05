@@ -43,6 +43,8 @@ ENV/
 /logs/
 *.log
 merged_model/
+merged_qwen2p5_3b_jobfit/
+outputs_train/
 
 # Docker
 .docker/
@@ -86,6 +88,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+outputs_jobfit_two_stage/
+.jobfit_recommend_cache.json/
 
 
 # docker compose 
