@@ -45,7 +45,7 @@ ENV/
 merged_model/
 merged_qwen2p5_3b_jobfit/
 outputs_train/
-
+outputs_train.rar
 # Docker
 .docker/
 docker-compose.override.yml
